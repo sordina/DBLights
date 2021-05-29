@@ -1,101 +1,62 @@
-import System.MIDI
-import System.IO
-import System.Process
-import Control.Monad
-import Control.Concurrent
-import Safe
 
-comment :: String -> IO ()
-comment s = hPutStrLn stderr ( "# " ++ s )
+{-# LANGUAGE  BlockArguments #-}
+
+import System.MIDI
+    ( close,
+      enumerateDestinations,
+      getName,
+      openDestination,
+      send,
+      start,
+      stop,
+      Connection,
+      Destination,
+      MidiMessage(MidiMessage),
+      MidiMessage'(NoteOn) )
+import System.IO ( hSetBuffering, stdout, BufferMode(LineBuffering) )
+import System.Environment ( getArgs )
+import Safe (readMay)
 
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
-  sources <- enumerateSources
   destinations <- enumerateDestinations
-  names   <- mapM getName sources
-  comment "What source do you want?"
-  mapM_ (comment . \(a,b) -> show a ++ " - " ++ b) (zip [1 :: Int ..] names)
-  choiceID  <- readMay `fmap` getLine :: IO (Maybe Int)
-  run choiceID $ do cid <- choiceID
-                    lookup cid (zip [1..] sources)
+  names        <- mapM getName destinations
+  let pairs = zip names destinations
+  mapM_ print pairs
+  getArgs >>= setup pairs
 
-run :: Maybe Int -> Maybe Source -> IO ()
-run (Just choiceID) (Just choice) = print choiceID           >> setup choice
-run _                _            = comment "Invalid Option" >> main
+setup :: [(String, Destination)] -> [String] -> IO ()
+setup [] _                     = putStrLn "No MIDI destinations found."
+setup _  a | "--help" `elem` a = putStrLn "Provide no arguments to pick first MIDI source, or specify a name."
+setup _  (_:_:_)               = putStrLn "Provide zero or one destination name as an argument."
+setup destinations []          = run (snd $ head destinations)
+setup destinations [n]         = do
+  case lookup n destinations of
+    Nothing -> putStrLn $ "Destination " <> n <> " couldn't be found"
+    Just d -> run d
 
-setup :: Source -> IO ()
-setup choice = do
-  buttonIDs     <- newChan
-  buttonStrings <- mapMChan createButton buttonIDs
-  keys          <- newChan
-  events        <- mergeChans buttonStrings keys
-  conn          <- openSource choice (Just (maybeWriteChan buttonIDs . getID))
+run :: Destination -> IO ()
+run choice = do
+  conn <- openDestination choice
   start conn
-  comment "Processing Events"
-  void $ forkIO $ do getContents >>= writeList2Chan keys . map Keyboard . lines
-                     writeChan keys (Keyboard "exit")
-  updateCommands events
+  mapM_ (event conn) =<< (lines <$> getContents)
+  mapM_ (send conn . message 0) [0..64]
   stop conn
+  close conn
 
-getID :: MidiEvent -> Maybe Int
-getID (MidiEvent _ (MidiMessage _ (NoteOn x _))) = Just x
-getID _ = Nothing
+event :: Connection -> String -> IO ()
+event d l = do
+  print [0..8]
+  case map readMay (words l) of
+    [Just x, Just y, Just v] -> change d x y v
+    x -> putStrLn $ "Couldn't decode line: [" <> l <> "]. Expected format [Int Int]."
 
-maybeWriteChan :: Chan a -> Maybe a -> IO ()
-maybeWriteChan c (Just e) = writeChan c e
-maybeWriteChan _ Nothing  = return ()
+change :: Connection -> Int -> Int -> Int -> IO ()
+change c x y v = do
+  let z = y * 16 + x
+  mapM_ (send c . message 127) [z]
+  -- mapM_ (send c . message 127) [16..23]
 
-createButton :: Show a => a -> IO Event
-createButton b = do
-  comment $ show b
-  return (Button (show b))
-
-mapMChan :: (x -> IO y) -> Chan x -> IO (Chan y)
-mapMChan f c1 = do
-  c2 <- dupChan c1
-  c3 <- newChan
-  void $ forkIO $ getChanContents c2 >>= mapM_ (writeChan c3 <=< f)
-  return c3
-
-mergeChans :: Chan a -> Chan a -> IO (Chan a)
-mergeChans a b = do
-  a' <- dupChan a
-  b' <- dupChan b
-  c  <- newChan
-  void $ forkIO $ getChanContents a' >>= writeList2Chan c
-  void $ forkIO $ getChanContents b' >>= writeList2Chan c
-  return c
-
-respondCommand :: Command -> IO ()
--- respondCommand (Run s  ) = void $ forkIO $ callCommand s
-respondCommand (Run s  ) = void $ forkIO $ void $ createProcess
-                                                  ((shell s)
-                                                   { delegate_ctlc = True
-                                                   , std_out       = UseHandle stderr })
-respondCommand (Log a b) = putStrLn a >> putStrLn b
-
-updateCommands :: Chan Event -> IO ()
-updateCommands events = getChanContents events
-                    >>= mapM_           respondCommand
-                      . behave          []
-                      . filter          (not . isComment)
-                      . filter          (/= Keyboard "")
-                      . takeWhile       (/= Keyboard "exit")
-
-isComment :: Event -> Bool
-isComment (Keyboard x) = and $ zipWith (==) x "#"
-isComment _            = False
-
--- Event definition and processing
-
-data Event   = Keyboard String | Button     String deriving (Eq, Show)
-data Command = Run      String | Log String String deriving (Eq, Show)
-
-behave :: [(String,String)] -> [Event] -> [Command]
-behave l (Button   b1 : xs) | Just c <- lookup b1 l = Run c     : behave l           (Keyboard b1 : xs)
-behave l (Button   b1 : Keyboard k1     : xs)       = Log b1 k1 : behave ((b1,k1):l) xs
-behave l (Keyboard __ : Button   b1     : xs)       =             behave l           (Button b1 : xs)
-behave l (Button   __ : Button   b2     : xs)       =             behave l           (Button b2 : xs)
-behave l (Keyboard k1 : Keyboard k2     : xs)       = Log k1 k2 : behave ((k1,k2):l) xs
-behave _ _                                          = []
+message :: Int -> Int -> MidiMessage
+message v p = MidiMessage 1 (NoteOn p v)
