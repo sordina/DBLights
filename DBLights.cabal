@@ -1,4 +1,4 @@
-name:                ScriptMidi
+name:                DBLights
 version:             0.1.0.2
 synopsis:            ScriptMidi Project...
 homepage:            http://github.com/sordina/ScriptMidi
@@ -9,8 +9,8 @@ maintainer:          maydwell@gmail.com
 build-type:          Simple
 cabal-version:       >=1.10
 
-executable scriptmidi
-  main-is:             scriptMidi.hs
+executable dblights
+  main-is:             dblights.hs
   build-depends:       base -any, hmidi, process, safe
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   hs-source-dirs:      src
