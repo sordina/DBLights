@@ -50,7 +50,7 @@ event d l = do
   print [0..8]
   case map readMay (words l) of
     [Just x, Just y, Just v] -> change d x y v
-    x -> putStrLn $ "Couldn't decode line: [" <> l <> "]. Expected format [Int Int]."
+    x -> putStrLn $ "Couldn't decode line: [" <> l <> "]. Expected format [x y v]. Example: [2 2 127]"
 
 change :: Connection -> Int -> Int -> Int -> IO ()
 change c x y v = do
