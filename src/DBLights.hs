@@ -12,6 +12,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   sources <- enumerateSources
+  destinations <- enumerateDestinations
   names   <- mapM getName sources
   comment "What source do you want?"
   mapM_ (comment . \(a,b) -> show a ++ " - " ++ b) (zip [1 :: Int ..] names)
